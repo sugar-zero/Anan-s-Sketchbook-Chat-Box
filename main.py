@@ -1,51 +1,49 @@
-# hotkey_demo.py
-import keyboard
 import time
 import pyperclip
-import io
-from PIL import Image
-import win32clipboard
-import win32gui
-import win32process
-import psutil
-from typing import Optional, Tuple
-from config import DELAY, FONT_FILE, BASEIMAGE_FILE, AUTO_SEND_IMAGE, AUTO_PASTE_IMAGE, BLOCK_HOTKEY, HOTKEY, SEND_HOTKEY,PASTE_HOTKEY,CUT_HOTKEY,SELECT_ALL_HOTKEY,TEXT_BOX_TOPLEFT,IMAGE_BOX_BOTTOMRIGHT,BASE_OVERLAY_FILE,USE_BASE_OVERLAY, ALLOWED_PROCESSES
+import platform
 
+# 导入操作系统适配器
+from os_adapters import os_adapter
+
+# 导入配置和功能模块
+from config import DELAY, FONT_FILE, BASEIMAGE_FILE, AUTO_SEND_IMAGE, AUTO_PASTE_IMAGE, BLOCK_HOTKEY, HOTKEY, \
+    SEND_HOTKEY, PASTE_HOTKEY, CUT_HOTKEY, SELECT_ALL_HOTKEY, TEXT_BOX_TOPLEFT, IMAGE_BOX_BOTTOMRIGHT, \
+    BASE_OVERLAY_FILE, USE_BASE_OVERLAY
 from text_fit_draw import draw_text_auto
 from image_fit_paste import paste_image_auto
 
-def get_foreground_window_process_name():
-    """
-    获取当前前台窗口的进程名称
-    """
-    try:
-        hwnd = win32gui.GetForegroundWindow()
-        _, pid = win32process.GetWindowThreadProcessId(hwnd)
-        process = psutil.Process(pid)
-        return process.name().lower()
-    except Exception as e:
-        print(f"无法获取当前进程名称: {e}")
-        return None
+# 检测当前操作系统
+current_os = platform.system()
 
+# macOS特定的热键适配
+if current_os == 'Darwin':
+    # 在macOS上将热键中的ctrl替换为cmd，将alt替换为opt
+    HOTKEY = os_adapter.adapt_hotkey_for_macos(HOTKEY)
+    SELECT_ALL_HOTKEY = os_adapter.adapt_hotkey_for_macos(SELECT_ALL_HOTKEY)
+    CUT_HOTKEY = os_adapter.adapt_hotkey_for_macos(CUT_HOTKEY)
+    PASTE_HOTKEY = os_adapter.adapt_hotkey_for_macos(PASTE_HOTKEY)
+    SEND_HOTKEY = os_adapter.adapt_hotkey_for_macos(SEND_HOTKEY)
+
+
+# 使用操作系统适配器进行剪贴板操作
 def copy_png_bytes_to_clipboard(png_bytes: bytes):
-    # 打开 PNG 字节为 Image
-    image = Image.open(io.BytesIO(png_bytes))
-    # 转换成 BMP 字节流（去掉 BMP 文件头的前 14 个字节）
-    with io.BytesIO() as output:
-        image.convert("RGB").save(output, "BMP")
-        bmp_data = output.getvalue()[14:]
-
-    # 打开剪贴板并写入 DIB 格式
-    win32clipboard.OpenClipboard()
-    win32clipboard.EmptyClipboard()
-    win32clipboard.SetClipboardData(win32clipboard.CF_DIB, bmp_data)
-    win32clipboard.CloseClipboard()
+    os_adapter.copy_png_bytes_to_clipboard(png_bytes)
 
 
-def cut_all_and_get_text() -> Tuple[str, object]:
+# 使用操作系统适配器进行键盘事件模拟
+def send_keystroke(key_combo):
+    os_adapter.send_keystroke(key_combo)
+
+
+# 使用操作系统适配器尝试获取图像
+def try_get_image():
+    return os_adapter.try_get_image()
+
+
+# 剪切全部文本并获取内容
+def cut_all_and_get_text() -> str:
     """
-    模拟 Ctrl+A / Ctrl+X 剪切全部文本，并返回剪切得到的内容和原始剪贴板内容。
-    delay: 每步之间的延时（秒），默认0.1秒。
+    模拟全选/剪切全部文本，并返回剪切得到的内容。
     """
     # 备份原剪贴板
     old_clip = pyperclip.paste()
@@ -53,63 +51,29 @@ def cut_all_and_get_text() -> Tuple[str, object]:
     # 清空剪贴板，防止读到旧数据
     pyperclip.copy("")
 
-    # 发送 Ctrl+A 和 Ctrl+X
-    keyboard.send(SELECT_ALL_HOTKEY)
-    keyboard.send(CUT_HOTKEY)
+    # 发送全选和剪切快捷键（使用跨平台函数）
+    send_keystroke(SELECT_ALL_HOTKEY)
+    send_keystroke(CUT_HOTKEY)
     time.sleep(DELAY)
 
     # 获取剪切后的内容
     new_clip = pyperclip.paste()
 
-    return new_clip, old_clip
+    return new_clip
 
-def try_get_image() -> Optional[Image.Image]:
-    """
-    尝试从剪贴板获取图像，如果没有图像则返回 None。
-    仅支持 Windows。
-    """
-    try:
-        win32clipboard.OpenClipboard()
-        if win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_DIB):
-            data = win32clipboard.GetClipboardData(win32clipboard.CF_DIB)
-            if data:
-                # 将 DIB 数据转换为字节流，供 Pillow 打开
-                bmp_data = data
-                # DIB 格式缺少 BMP 文件头，需要手动加上
-                # BMP 文件头是 14 字节，包含 "BM" 标识和文件大小信息
-                header = b'BM' + (len(bmp_data) + 14).to_bytes(4, 'little') + b'\x00\x00\x00\x00\x36\x00\x00\x00'
-                image = Image.open(io.BytesIO(header + bmp_data))
-                return image
-    except Exception as e:
-        print("无法从剪贴板获取图像：", e)
-    finally:
-        try:
-            win32clipboard.CloseClipboard()
-        except:
-            pass
-    return None
 
+# 主要处理逻辑
 def Start():
-    # 检查是否设置了允许的进程列表，如果设置了，则检查当前进程是否在允许列表中
-    if ALLOWED_PROCESSES:
-        current_process = get_foreground_window_process_name()
-        if current_process is None or current_process not in [p.lower() for p in ALLOWED_PROCESSES]:
-            print(f"当前进程 {current_process} 不在允许列表中，跳过执行")
-            # 如果不是在允许的进程中，直接发送原始热键
-            if not BLOCK_HOTKEY:
-                keyboard.send(HOTKEY)
-            return
-
     print("Start generate...")
 
-    text, old_clipboard_content=cut_all_and_get_text()
-    image=try_get_image()
+    text = cut_all_and_get_text()
+    image = try_get_image()
 
     if text == "" and image is None:
         print("no text or image")
         return
-    
-    png_bytes=None
+
+    png_bytes = None
 
     if image is not None:
         print("Get image")
@@ -117,66 +81,63 @@ def Start():
         try:
             png_bytes = paste_image_auto(
                 image_source=BASEIMAGE_FILE,
-                image_overlay= BASE_OVERLAY_FILE if USE_BASE_OVERLAY else None,
+                image_overlay=BASE_OVERLAY_FILE if USE_BASE_OVERLAY else None,
                 top_left=TEXT_BOX_TOPLEFT,
                 bottom_right=IMAGE_BOX_BOTTOMRIGHT,
                 content_image=image,
                 align="center",
                 valign="middle",
                 padding=12,
-                allow_upscale=True, 
-                keep_alpha=True,      # 使用内容图 alpha 作为蒙版
-                )
+                allow_upscale=True,
+                keep_alpha=True,  # 使用内容图 alpha 作为蒙版
+            )
         except Exception as e:
             print("Generate image failed:", e)
             return
-    
+
     elif text != "":
-        print("Get text: "+text)
+        print("Get text: " + text)
 
         try:
             png_bytes = draw_text_auto(
                 image_source=BASEIMAGE_FILE,
-                image_overlay= BASE_OVERLAY_FILE if USE_BASE_OVERLAY else None,
+                image_overlay=BASE_OVERLAY_FILE if USE_BASE_OVERLAY else None,
                 top_left=TEXT_BOX_TOPLEFT,
                 bottom_right=IMAGE_BOX_BOTTOMRIGHT,
                 text=text,
                 color=(0, 0, 0),
-                max_font_height=64,        # 例如限制最大字号高度为 64 像素
+                max_font_height=64,  # 例如限制最大字号高度为 64 像素
                 font_path=FONT_FILE,
-                )
+            )
         except Exception as e:
             print("Generate image failed:", e)
             return
-        
+
     if png_bytes is None:
         print("Generate image failed!")
         return
-    
+
     copy_png_bytes_to_clipboard(png_bytes)
-    
+
     if AUTO_PASTE_IMAGE:
-        keyboard.send(PASTE_HOTKEY)
+        send_keystroke(PASTE_HOTKEY)  # 使用跨平台函数
 
         time.sleep(DELAY)
 
         if AUTO_SEND_IMAGE:
-            keyboard.send(SEND_HOTKEY)
+            send_keystroke(SEND_HOTKEY)  # 使用跨平台函数
 
-    # 恢复原始剪贴板内容
-    pyperclip.copy(old_clipboard_content)
-    
     print("Generate image successed!")
 
 
-    
-
-# 绑定 Ctrl+Alt+H 作为全局热键
-ok=keyboard.add_hotkey(HOTKEY, Start, suppress=BLOCK_HOTKEY or HOTKEY==SEND_HOTKEY)
-
-print("Starting...")
-print("Hot key bind: "+str(bool(ok)))
-print("Allowed processes: " + str(ALLOWED_PROCESSES))
-
-# 保持程序运行
-keyboard.wait()
+# 主程序入口
+if __name__ == "__main__":
+    try:
+        # 使用操作系统适配器启动热键监听
+        os_adapter.start_hotkey_listener(HOTKEY, Start, BLOCK_HOTKEY or HOTKEY == SEND_HOTKEY)
+    except Exception as e:
+        print(f"发生错误: {e}")
+    except KeyboardInterrupt:
+        print("\n程序已被用户中断。")
+    finally:
+        print("程序已退出。")

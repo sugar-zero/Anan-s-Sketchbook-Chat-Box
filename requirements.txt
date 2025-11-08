@@ -1,4 +1,11 @@
+# 基础依赖
 Pillow>=12.0.0
-keyboard>=0.13.5
 pyperclip>=1.11.0
-pywin32>=311
+
+# 键盘监听 - Windows
+keyboard>=0.13.5;sys_platform=='win32'
+pywin32>=311;sys_platform=='win32'
+
+# 键盘监听和剪贴板操作 - macOS
+pyobjc>=10.0;sys_platform=='darwin'
+pynput>=1.7.6;sys_platform=='darwin'
